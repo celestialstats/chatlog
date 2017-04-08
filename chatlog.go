@@ -1,6 +1,7 @@
 package chatlog
 
 import (
+	"fmt"
 	"time"
 	"path"
 	"os"
@@ -11,13 +12,16 @@ type ChatLog struct {
 	Server string
 	logDir string
 	logFile *os.File
+	logChannel chan LogLine
 }
 
-func NewChatLog(LogDir, Protocol, Server string) *ChatLog {
+func NewChatLog(LogDir, Protocol, Server string, MaxQueue int) *ChatLog {
 	cl := new(ChatLog)
 	cl.logDir = LogDir
 	cl.Protocol = Protocol
 	cl.Server = Server
+	cl.logChannel = make(chan LogLine, MaxQueue)
+	go cl.WriteLog()
 	return cl
 }
 
@@ -34,8 +38,21 @@ func (chatLog *ChatLog) OpenLog() {
 	}
 }
 
-func (chatLog *ChatLog) AddEntry(Initiator, LineType, Content string) {
-	
+func (chatLog *ChatLog) AddEntry(Timestamp time.Time, Initiator, LineType, Content string) {
+	chatLog.logChannel <- LogLine {
+		Timestamp: Timestamp,
+		Initiator: Initiator,
+		LineType: LineType,
+		Content: Content,
+	}
+}
+
+func (chatLog *ChatLog) WriteLog() {
+	for i := range chatLog.logChannel {
+		time.Sleep(time.Duration(500)*time.Millisecond)
+		fmt.Println(">", i.Timestamp.UnixNano(), i.Content, " (", len(chatLog.logChannel), ")")
+		
+	}
 }
 
 func (chatLog *ChatLog) ComputeFilename() string {
@@ -43,5 +60,5 @@ func (chatLog *ChatLog) ComputeFilename() string {
 		chatLog.logDir,
 		chatLog.Protocol,
 		chatLog.Server,
-		time.Now().Format("2006/01/02/15.csl"))
+		time.Now().UTC().Format("2006/01/02/15.csl"))
 }
