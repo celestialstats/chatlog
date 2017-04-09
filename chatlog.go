@@ -3,7 +3,6 @@ package chatlog
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"os"
 	"path"
@@ -46,9 +45,9 @@ func (chatLog *ChatLog) Open() {
 
 // AddEntry adds a map representing the chat message to the log channel. It
 // also appends the current Unix Timestamp in milliseconds to the map.
-func (chatLog *ChatLog) AddEntry(testEntry map[string]string) {
-	testEntry["Timestamp"] = strconv.FormatInt(time.Now().UTC().UnixNano()/int64(time.Millisecond), 36)
-	chatLog.logChannel <- testEntry
+func (chatLog *ChatLog) AddEntry(newEntry map[string]string) {
+	newEntry["Timestamp"] = strconv.FormatInt(time.Now().UTC().UnixNano()/int64(time.Millisecond), 36)
+	chatLog.logChannel <- newEntry
 }
 
 // Write outputs any additions to the log channel to the current log file.
