@@ -6,7 +6,7 @@ This is the chat logging library for saving, writing, and reading chat logs in a
 
 ## Build Status
 
-Coming Soon!
+[![GoDoc](https://godoc.org/github.com/celestialstats/chatlog?status.svg)](https://godoc.org/github.com/celestialstats/chatlog)
 
 ## License
 
