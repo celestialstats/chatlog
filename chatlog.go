@@ -3,7 +3,7 @@ package chatlog
 
 import (
 	"encoding/json"
-	"log"
+	log "github.com/Sirupsen/logrus"
 	"os"
 	"path"
 	_ "strconv"
@@ -34,13 +34,14 @@ func NewChatLog(LogDir, Protocol string, MaxQueue int) *ChatLog {
 func (chatLog *ChatLog) open(Server string) *os.File {
 	var logFilename = chatLog.generateFilename(Server)
 	var parentDir = path.Dir(logFilename)
+	log.Debug("Opening Log: ", logFilename)
 	if _, err := os.Stat(parentDir); os.IsNotExist(err) {
+		log.Debug("\tParent directory doesn't exist. Creating...")
 		os.MkdirAll(parentDir, 0755)
 	}
 	f, err := os.OpenFile(logFilename, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
 	if err != nil {
-		log.Println("Error opening file: %v - %v", logFilename, err)
-		os.Exit(1)
+		log.Fatal("Error opening file: ", logFilename, " - ", err)
 	}
 	return f
 }
@@ -61,7 +62,7 @@ func (chatLog *ChatLog) write() {
 		jsonVal, _ := json.Marshal(i)
 		_, err := curLogFile.WriteString(string(jsonVal) + "\n")
 		if err != nil {
-			log.Println("Error writing to file:", err)
+			log.Fatal("Error writing to file: ", err)
 		}
 		curLogFile.Sync()
 	}
@@ -74,6 +75,7 @@ func (chatLog *ChatLog) getLogHandle(Server string) *os.File {
 		if chatLog.logFiles[Server].Name() != chatLog.generateFilename(Server) {
 			// Filename doesn't match where we should be writing so close
 			// and re-open with new name
+			log.Debug("Closing Log: ", chatLog.logFiles[Server].Name())
 			chatLog.logFiles[Server].Close()
 			chatLog.logFiles[Server] = chatLog.open(Server)
 		}
