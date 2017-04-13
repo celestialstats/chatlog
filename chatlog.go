@@ -20,25 +20,27 @@ type ChatLog struct {
 
 // NewChatLog returns a new ChatLog ready to recieve log entries and write them to disk.
 func NewChatLog(LogDir, Protocol string, MaxQueue int) *ChatLog {
-	cl := new(ChatLog)
-	cl.logDir = LogDir
-	cl.Protocol = Protocol
-	cl.logFiles = make(map[string]*os.File)
-	cl.logChannel = make(chan map[string]string, MaxQueue)
-	go cl.Write()
+	cl := &ChatLog{
+		logDir:     LogDir,
+		Protocol:   Protocol,
+		logFiles:   make(map[string]*os.File),
+		logChannel: make(chan map[string]string, MaxQueue),
+	}
+	go cl.write()
 	return cl
 }
 
 // Open opens a specific structured file for later writing.
-func (chatLog *ChatLog) Open(Server string) *os.File {
-	var logFilename = chatLog.GenerateFilename(Server)
+func (chatLog *ChatLog) open(Server string) *os.File {
+	var logFilename = chatLog.generateFilename(Server)
 	var parentDir = path.Dir(logFilename)
 	if _, err := os.Stat(parentDir); os.IsNotExist(err) {
 		os.MkdirAll(parentDir, 0755)
 	}
 	f, err := os.OpenFile(logFilename, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
 	if err != nil {
-		log.Println("Error opening file:", logFilename)
+		log.Println("Error opening file: %v - %v", logFilename, err)
+		os.Exit(1)
 	}
 	return f
 }
@@ -53,9 +55,9 @@ func (chatLog *ChatLog) AddEntry(newEntry map[string]string) {
 // If the log does not exist or is old this triggers the log to be opened
 // or rotated. All entries are converted to JSON and stored on object per.
 // line.
-func (chatLog *ChatLog) Write() {
+func (chatLog *ChatLog) write() {
 	for i := range chatLog.logChannel {
-		curLogFile := chatLog.GetLogHandle(i["Server"])
+		curLogFile := chatLog.getLogHandle(i["Server"])
 		jsonVal, _ := json.Marshal(i)
 		_, err := curLogFile.WriteString(string(jsonVal) + "\n")
 		if err != nil {
@@ -66,18 +68,18 @@ func (chatLog *ChatLog) Write() {
 }
 
 // GetLogHandle returns a pointer to the current log file we should be writing to.
-func (chatLog *ChatLog) GetLogHandle(Server string) *os.File {
+func (chatLog *ChatLog) getLogHandle(Server string) *os.File {
 	if _, ok := chatLog.logFiles[Server]; ok {
 		// A log file exists with this server name
-		if chatLog.logFiles[Server].Name() != chatLog.GenerateFilename(Server) {
+		if chatLog.logFiles[Server].Name() != chatLog.generateFilename(Server) {
 			// Filename doesn't match where we should be writing so close
 			// and re-open with new name
 			chatLog.logFiles[Server].Close()
-			chatLog.logFiles[Server] = chatLog.Open(Server)
+			chatLog.logFiles[Server] = chatLog.open(Server)
 		}
 	} else {
 		// Chatlog for this server isn't open, so open it.
-		chatLog.logFiles[Server] = chatLog.Open(Server)
+		chatLog.logFiles[Server] = chatLog.open(Server)
 	}
 	return chatLog.logFiles[Server]
 }
@@ -85,7 +87,7 @@ func (chatLog *ChatLog) GetLogHandle(Server string) *os.File {
 // GenerateFilename returns a filename in the following format
 // using the current timestamp:
 // $LOGDIR/$PROTOCOL/$SERVER/YYYY/MM/DD/HH.csl
-func (chatLog *ChatLog) GenerateFilename(Server string) string {
+func (chatLog *ChatLog) generateFilename(Server string) string {
 	return path.Join(
 		chatLog.logDir,
 		chatLog.Protocol,
