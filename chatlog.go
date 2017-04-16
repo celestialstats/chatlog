@@ -3,52 +3,74 @@ package chatlog
 
 import (
 	"encoding/json"
+	"fmt"
+
 	log "github.com/Sirupsen/logrus"
-	"os"
-	"path"
-	_ "strconv"
-	"time"
+	"github.com/streadway/amqp"
 )
 
 type ChatLog struct {
-	Protocol   string
-	Server     string
-	logDir     string
-	logFiles   map[string]*os.File
-	logChannel chan map[string]string
+	Protocol      string
+	Server        string
+	rmqHostname   string
+	rmqPort       string
+	rmqUsername   string
+	rmqPassword   string
+	rmqLogQueue   string
+	rmqConnection *amqp.Connection
+	rmqChannel    *amqp.Channel
+	logChannel    chan map[string]string
 }
 
 // NewChatLog returns a new ChatLog ready to recieve log entries and write them to disk.
-func NewChatLog(LogDir, Protocol string, MaxQueue int) *ChatLog {
+func NewChatLog(rmqHostname, rmqPort, rmqUsername, rmqPassword, rmqLogQueue, Protocol string, MaxQueue int) *ChatLog {
 	cl := &ChatLog{
-		logDir:     LogDir,
-		Protocol:   Protocol,
-		logFiles:   make(map[string]*os.File),
-		logChannel: make(chan map[string]string, MaxQueue),
+		Protocol:    Protocol,
+		rmqHostname: rmqHostname,
+		rmqPort:     rmqPort,
+		rmqUsername: rmqUsername,
+		rmqPassword: rmqPassword,
+		rmqLogQueue: rmqLogQueue,
+		logChannel:  make(chan map[string]string, MaxQueue),
 	}
-	go cl.write()
+	go cl.queue()
 	return cl
 }
 
 // Open opens a specific structured file for later writing.
-func (chatLog *ChatLog) open(Server string) *os.File {
-	var logFilename = chatLog.generateFilename(Server)
-	var parentDir = path.Dir(logFilename)
-	log.Debug("Opening Log: ", logFilename)
-	if _, err := os.Stat(parentDir); os.IsNotExist(err) {
-		log.Debug("\tParent directory doesn't exist. Creating...")
-		os.MkdirAll(parentDir, 0755)
+func (chatLog *ChatLog) open() {
+	if chatLog.rmqConnection == nil {
+		conn, err := amqp.Dial(fmt.Sprintf(
+			"amqp://%v:%v@%v:%v/",
+			chatLog.rmqUsername,
+			chatLog.rmqPassword,
+			chatLog.rmqHostname,
+			chatLog.rmqPort,
+		))
+		failOnError(err, "Failed to connect to RabbitMQ")
+		chatLog.rmqConnection = conn
 	}
-	f, err := os.OpenFile(logFilename, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
-	if err != nil {
-		log.Fatal("Error opening file: ", logFilename, " - ", err)
+	if chatLog.rmqChannel == nil {
+		ch, err := chatLog.rmqConnection.Channel()
+		failOnError(err, "Failed to open a channel")
+
+		_, err = ch.QueueDeclare(
+			chatLog.rmqLogQueue, // name
+			true,                // durable
+			false,               // delete when unused
+			false,               // exclusive
+			false,               // no-wait
+			nil,                 // arguments
+		)
+		failOnError(err, "Failed to declare a queue")
+		chatLog.rmqChannel = ch
 	}
-	return f
 }
 
 // AddEntry adds a map representing the chat message to the log channel. It
 // also appends the current Unix Timestamp in milliseconds to the map.
 func (chatLog *ChatLog) AddEntry(newEntry map[string]string) {
+	newEntry["ServerType"] = "DISCORD"
 	chatLog.logChannel <- newEntry
 }
 
@@ -56,44 +78,26 @@ func (chatLog *ChatLog) AddEntry(newEntry map[string]string) {
 // If the log does not exist or is old this triggers the log to be opened
 // or rotated. All entries are converted to JSON and stored on object per.
 // line.
-func (chatLog *ChatLog) write() {
+func (chatLog *ChatLog) queue() {
 	for i := range chatLog.logChannel {
-		curLogFile := chatLog.getLogHandle(i["Server"])
 		jsonVal, _ := json.Marshal(i)
-		_, err := curLogFile.WriteString(string(jsonVal) + "\n")
-		if err != nil {
-			log.Fatal("Error writing to file: ", err)
-		}
-		curLogFile.Sync()
+		chatLog.open()
+		err := chatLog.rmqChannel.Publish(
+			"",                  // exchange
+			chatLog.rmqLogQueue, // routing key
+			false,               // mandatory
+			false,               // immediate
+			amqp.Publishing{
+				ContentType: "application/json",
+				Body:        []byte(jsonVal),
+			})
+		failOnError(err, "Unable to submit to queue.")
 	}
 }
 
-// GetLogHandle returns a pointer to the current log file we should be writing to.
-func (chatLog *ChatLog) getLogHandle(Server string) *os.File {
-	if _, ok := chatLog.logFiles[Server]; ok {
-		// A log file exists with this server name
-		if chatLog.logFiles[Server].Name() != chatLog.generateFilename(Server) {
-			// Filename doesn't match where we should be writing so close
-			// and re-open with new name
-			log.Debug("Closing Log: ", chatLog.logFiles[Server].Name())
-			chatLog.logFiles[Server].Close()
-			chatLog.logFiles[Server] = chatLog.open(Server)
-		}
-	} else {
-		// Chatlog for this server isn't open, so open it.
-		chatLog.logFiles[Server] = chatLog.open(Server)
+func failOnError(err error, msg string) {
+	if err != nil {
+		log.Fatalf("%s: %s", msg, err)
+		panic(fmt.Sprintf("%s: %s", msg, err))
 	}
-	return chatLog.logFiles[Server]
-}
-
-// GenerateFilename returns a filename in the following format
-// using the current timestamp:
-// $LOGDIR/$PROTOCOL/$SERVER/YYYY/MM/DD/HH.csl
-func (chatLog *ChatLog) generateFilename(Server string) string {
-	return path.Join(
-		chatLog.logDir,
-		chatLog.Protocol,
-		Server,
-		time.Now().UTC().Format("2006/01/02/15-04-05.csl"))
-	//time.Now().UTC().Format("2006/01/02/15.csl"))
 }
